@@ -59,10 +59,18 @@ jobs:
                   if len(parts) == 2 and parts[0] == "A" and parts[1].endswith(".md"):
                       new_files.append(parts[1])
 
-          print(f"New .md files: {new_files}")
+          # Only keep files inside known server folders
+          KNOWN_SERVERS = {"acerexfactions", "cobblecoreskyblock"}
+
+          new_files = [
+              f for f in new_files
+              if "/" in f and f.split("/")[0].lower() in KNOWN_SERVERS
+          ]
+
+          print(f"Filtered .md files (server folders only): {new_files}")
 
           if not new_files:
-              print("No new markdown files. Skipping.")
+              print("No new markdown files in server folders. Skipping.")
               exit(0)
 
           ROLE_ID = "1520542025676488838"
