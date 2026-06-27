@@ -14,63 +14,99 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2 # need previous commit to diff against
+          fetch-depth: 0 # full history so we can diff properly
 
-      - name: Detect new changelog files
-        id: detect
-        run: |
-          # Get list of newly added .md files in this push
-          NEW_FILES=$(git diff --name-status HEAD~1 HEAD | awk '$1 == "A" && $2 ~ /\.md$/ { print $2 }')
-          echo "new_files=$NEW_FILES" >> $GITHUB_OUTPUT
-          if [ -z "$NEW_FILES" ]; then
-            echo "found=false" >> $GITHUB_OUTPUT
-          else
-            echo "found=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Send Discord notifications
-        if: steps.detect.outputs.found == 'true'
+      - name: Send Discord notification for new changelogs
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
-          echo "${{ steps.detect.outputs.new_files }}" | while IFS= read -r file; do
-            [ -z "$file" ] && continue
+          python3 << 'PYTHON'
+          import subprocess
+          import os
+          import json
+          import urllib.request
+          import re
 
-            # Parse frontmatter fields
-            TITLE=$(grep -m1 '^title:' "$file" | sed 's/title:[[:space:]]*//')
-            DATE=$(grep -m1 '^date:' "$file" | sed 's/date:[[:space:]]*//')
-            AUTHOR=$(grep -m1 '^author:' "$file" | sed 's/author:[[:space:]]*//')
+          webhook = os.environ.get("DISCORD_WEBHOOK", "")
+          if not webhook:
+              print("No webhook URL set.")
+              exit(1)
 
-            # Derive server name from folder path (e.g. acerexfactions/2026-06-01.md → Acerex Factions)
-            FOLDER=$(echo "$file" | cut -d'/' -f1)
-            SERVER=$(echo "$FOLDER" | sed 's/\b./\u&/g' | sed 's/[a-z][A-Z]/& /g')
+          # Get files added in this push
+          result = subprocess.run(
+              ["git", "diff", "--name-status", "HEAD~1", "HEAD"],
+              capture_output=True, text=True
+          )
 
-            # Strip frontmatter, get body, take first 800 chars
-            BODY=$(awk '/^---/{i++} i==2{found=1; next} found' "$file" | head -c 800)
+          new_files = []
+          for line in result.stdout.splitlines():
+              parts = line.split("\t")
+              if len(parts) == 2 and parts[0] == "A" and parts[1].endswith(".md"):
+                  new_files.append(parts[1])
 
-            # Build Discord embed JSON
-            PAYLOAD=$(cat <<JSON
-          {
-            "embeds": [{
-              "title": "$TITLE",
-              "description": "\`\`\`md\n$BODY\n\`\`\`",
-              "color": 3066993,
-              "author": {
-                "name": "$SERVER Changelog"
-              },
-              "footer": {
-                "text": "Posted by $AUTHOR • $DATE"
-              },
-              "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            }]
+          print(f"New .md files: {new_files}")
+
+          if not new_files:
+              print("No new markdown files found.")
+              exit(0)
+
+          # Color map per server folder
+          colors = {
+              "acerexfactions": 0x22c55e,
+              "cobblecoreskyblock": 0x3b82f6,
           }
-          JSON
-            )
 
-            curl -s -H "Content-Type: application/json" \
-                 -X POST \
-                 -d "$PAYLOAD" \
-                 "$DISCORD_WEBHOOK"
+          for filepath in new_files:
+              with open(filepath, "r") as f:
+                  raw = f.read()
 
-            echo "Notified Discord for $file"
-          done
+              # Parse frontmatter
+              fm_match = re.match(r"^---\n(.*?)\n---\n(.*)", raw, re.DOTALL)
+              if fm_match:
+                  fm_text = fm_match.group(1)
+                  body = fm_match.group(2).strip()
+              else:
+                  fm_text = ""
+                  body = raw.strip()
+
+              def get_fm(key):
+                  m = re.search(rf"^{key}:\s*(.+)$", fm_text, re.MULTILINE)
+                  return m.group(1).strip() if m else ""
+
+              title = get_fm("title") or "New Changelog"
+              date = get_fm("date") or ""
+              author = get_fm("author") or "Unknown"
+
+              # Server name from folder
+              folder = filepath.split("/")[0] if "/" in filepath else "server"
+              color = colors.get(folder.lower(), 0x5865F2)
+
+              # Trim body to 1000 chars for Discord
+              if len(body) > 1000:
+                  body = body[:1000] + "\n..."
+
+              footer_text = f"Posted by {author}"
+              if date:
+                  footer_text += f" • {date}"
+
+              embed = {
+                  "title": f"📋 {title}",
+                  "description": f"```md\n{body}\n```",
+                  "color": color,
+                  "author": {"name": f"{folder.title()} Changelog"},
+                  "footer": {"text": footer_text},
+              }
+
+              payload = json.dumps({"embeds": [embed]}).encode("utf-8")
+
+              req = urllib.request.Request(
+                  webhook,
+                  data=payload,
+                  headers={"Content-Type": "application/json"},
+                  method="POST"
+              )
+
+              with urllib.request.urlopen(req) as resp:
+                  print(f"Discord response: {resp.status} for {filepath}")
+
+          PYTHON
