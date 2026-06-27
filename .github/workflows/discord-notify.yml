@@ -65,6 +65,13 @@ jobs:
               print("No new markdown files. Skipping.")
               exit(0)
 
+          ROLE_ID = "1520542025676488838"
+
+          server_labels = {
+              "acerexfactions": "Acerex Factions",
+              "cobblecoreskyblock": "Cobblecore Skyblock",
+          }
+
           colors = {
               "acerexfactions": 0x22c55e,
               "cobblecoreskyblock": 0x3b82f6,
@@ -112,9 +119,16 @@ jobs:
                   "footer": {"text": footer_text},
               }
 
+              server_name = server_labels.get(folder.lower(), folder.title())
+              ping_message = f"<@&{ROLE_ID}> new changelog for {server_name}"
+
               resp = requests.post(
                   webhook,
-                  json={"embeds": [embed]},
+                  json={
+                      "content": ping_message,
+                      "allowed_mentions": {"roles": [ROLE_ID]},
+                      "embeds": [embed],
+                  },
                   headers={"User-Agent": "DiscordBot (https://github.com/Astral-Studios/ChangelogTest, 1.0)"},
               )
 
