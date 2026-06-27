@@ -111,6 +111,7 @@ jobs:
 
               folder = filepath.split("/")[0] if "/" in filepath else "server"
               color = colors.get(folder.lower(), 0x5865F2)
+              server_name = server_labels.get(folder.lower(), folder.title())
 
               if len(body) > 1000:
                   body = body[:1000] + "\n..."
@@ -123,7 +124,7 @@ jobs:
                   "title": f"📋 {title}",
                   "description": f"```md\n{body}\n```",
                   "color": color,
-                  "author": {"name": f"{folder.title()} Changelog"},
+                  "author": {"name": f"{server_name} Changelog"},
                   "footer": {"text": footer_text},
               }
 
