@@ -1,0 +1,76 @@
+name: Discord Changelog Notification
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "**/*.md"
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2 # need previous commit to diff against
+
+      - name: Detect new changelog files
+        id: detect
+        run: |
+          # Get list of newly added .md files in this push
+          NEW_FILES=$(git diff --name-status HEAD~1 HEAD | awk '$1 == "A" && $2 ~ /\.md$/ { print $2 }')
+          echo "new_files=$NEW_FILES" >> $GITHUB_OUTPUT
+          if [ -z "$NEW_FILES" ]; then
+            echo "found=false" >> $GITHUB_OUTPUT
+          else
+            echo "found=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Discord notifications
+        if: steps.detect.outputs.found == 'true'
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          echo "${{ steps.detect.outputs.new_files }}" | while IFS= read -r file; do
+            [ -z "$file" ] && continue
+
+            # Parse frontmatter fields
+            TITLE=$(grep -m1 '^title:' "$file" | sed 's/title:[[:space:]]*//')
+            DATE=$(grep -m1 '^date:' "$file" | sed 's/date:[[:space:]]*//')
+            AUTHOR=$(grep -m1 '^author:' "$file" | sed 's/author:[[:space:]]*//')
+
+            # Derive server name from folder path (e.g. acerexfactions/2026-06-01.md → Acerex Factions)
+            FOLDER=$(echo "$file" | cut -d'/' -f1)
+            SERVER=$(echo "$FOLDER" | sed 's/\b./\u&/g' | sed 's/[a-z][A-Z]/& /g')
+
+            # Strip frontmatter, get body, take first 800 chars
+            BODY=$(awk '/^---/{i++} i==2{found=1; next} found' "$file" | head -c 800)
+
+            # Build Discord embed JSON
+            PAYLOAD=$(cat <<JSON
+          {
+            "embeds": [{
+              "title": "$TITLE",
+              "description": "\`\`\`md\n$BODY\n\`\`\`",
+              "color": 3066993,
+              "author": {
+                "name": "$SERVER Changelog"
+              },
+              "footer": {
+                "text": "Posted by $AUTHOR • $DATE"
+              },
+              "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            }]
+          }
+          JSON
+            )
+
+            curl -s -H "Content-Type: application/json" \
+                 -X POST \
+                 -d "$PAYLOAD" \
+                 "$DISCORD_WEBHOOK"
+
+            echo "Notified Discord for $file"
+          done
