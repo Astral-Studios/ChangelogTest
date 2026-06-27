@@ -16,6 +16,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install requests
+        run: pip install requests --quiet
+
       - name: Send Discord notification for new changelogs
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
@@ -26,29 +29,23 @@ jobs:
           import json
           import re
           import subprocess
-          import urllib.request
+          import requests
 
           webhook = os.environ.get("DISCORD_WEBHOOK", "")
           if not webhook:
               print("ERROR: No DISCORD_WEBHOOK_URL secret set.")
               exit(1)
 
-          # Use before/after SHAs from the event — works for all commit types including merges
           event_path = os.environ.get("GITHUB_EVENT_PATH", "")
           with open(event_path) as f:
               event = json.load(f)
 
           before = event.get("before", "")
           after = event.get("after", "")
-
           print(f"Comparing {before} → {after}")
 
-          # If before is all zeros it's the first push to the branch
           if before == "0000000000000000000000000000000000000000":
-              result = subprocess.run(
-                  ["git", "ls-files", "*.md"],
-                  capture_output=True, text=True
-              )
+              result = subprocess.run(["git", "ls-files", "*.md"], capture_output=True, text=True)
               new_files = [f for f in result.stdout.splitlines() if f.endswith(".md")]
           else:
               result = subprocess.run(
@@ -115,18 +112,15 @@ jobs:
                   "footer": {"text": footer_text},
               }
 
-              payload = json.dumps({"embeds": [embed]}).encode("utf-8")
-              req = urllib.request.Request(
+              resp = requests.post(
                   webhook,
-                  data=payload,
-                  headers={"Content-Type": "application/json"},
-                  method="POST"
+                  json={"embeds": [embed]},
+                  headers={"User-Agent": "DiscordBot (https://github.com/Astral-Studios/ChangelogTest, 1.0)"},
               )
 
-              try:
-                  with urllib.request.urlopen(req) as resp:
-                      print(f"✅ Discord notified ({resp.status}) for {filepath}")
-              except urllib.error.HTTPError as e:
-                  print(f"❌ Discord error {e.code}: {e.read().decode()}")
+              if resp.status_code in (200, 204):
+                  print(f"✅ Discord notified ({resp.status_code}) for {filepath}")
+              else:
+                  print(f"❌ Discord error {resp.status_code}: {resp.text}")
 
           PYTHON
