@@ -14,54 +14,74 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history so we can diff properly
+          fetch-depth: 0
 
       - name: Send Discord notification for new changelogs
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
         run: |
           python3 << 'PYTHON'
-          import subprocess
           import os
           import json
-          import urllib.request
           import re
+          import subprocess
+          import urllib.request
 
           webhook = os.environ.get("DISCORD_WEBHOOK", "")
           if not webhook:
-              print("No webhook URL set.")
+              print("ERROR: No DISCORD_WEBHOOK_URL secret set.")
               exit(1)
 
-          # Get files added in this push
-          result = subprocess.run(
-              ["git", "diff", "--name-status", "HEAD~1", "HEAD"],
-              capture_output=True, text=True
-          )
+          # Use before/after SHAs from the event — works for all commit types including merges
+          event_path = os.environ.get("GITHUB_EVENT_PATH", "")
+          with open(event_path) as f:
+              event = json.load(f)
 
-          new_files = []
-          for line in result.stdout.splitlines():
-              parts = line.split("\t")
-              if len(parts) == 2 and parts[0] == "A" and parts[1].endswith(".md"):
-                  new_files.append(parts[1])
+          before = event.get("before", "")
+          after = event.get("after", "")
+
+          print(f"Comparing {before} → {after}")
+
+          # If before is all zeros it's the first push to the branch
+          if before == "0000000000000000000000000000000000000000":
+              result = subprocess.run(
+                  ["git", "ls-files", "*.md"],
+                  capture_output=True, text=True
+              )
+              new_files = [f for f in result.stdout.splitlines() if f.endswith(".md")]
+          else:
+              result = subprocess.run(
+                  ["git", "diff", "--name-status", "--diff-filter=A", before, after],
+                  capture_output=True, text=True
+              )
+              print(f"Git diff output:\n{result.stdout}")
+              new_files = []
+              for line in result.stdout.splitlines():
+                  parts = line.split("\t")
+                  if len(parts) == 2 and parts[0] == "A" and parts[1].endswith(".md"):
+                      new_files.append(parts[1])
 
           print(f"New .md files: {new_files}")
 
           if not new_files:
-              print("No new markdown files found.")
+              print("No new markdown files. Skipping.")
               exit(0)
 
-          # Color map per server folder
           colors = {
               "acerexfactions": 0x22c55e,
               "cobblecoreskyblock": 0x3b82f6,
           }
 
           for filepath in new_files:
+              if not os.path.exists(filepath):
+                  print(f"File not found: {filepath}, skipping.")
+                  continue
+
               with open(filepath, "r") as f:
                   raw = f.read()
 
-              # Parse frontmatter
-              fm_match = re.match(r"^---\n(.*?)\n---\n(.*)", raw, re.DOTALL)
+              fm_match = re.match(r"^---\n(.*?)\n---\n?(.*)", raw, re.DOTALL)
               if fm_match:
                   fm_text = fm_match.group(1)
                   body = fm_match.group(2).strip()
@@ -77,11 +97,9 @@ jobs:
               date = get_fm("date") or ""
               author = get_fm("author") or "Unknown"
 
-              # Server name from folder
               folder = filepath.split("/")[0] if "/" in filepath else "server"
               color = colors.get(folder.lower(), 0x5865F2)
 
-              # Trim body to 1000 chars for Discord
               if len(body) > 1000:
                   body = body[:1000] + "\n..."
 
@@ -98,7 +116,6 @@ jobs:
               }
 
               payload = json.dumps({"embeds": [embed]}).encode("utf-8")
-
               req = urllib.request.Request(
                   webhook,
                   data=payload,
@@ -106,7 +123,10 @@ jobs:
                   method="POST"
               )
 
-              with urllib.request.urlopen(req) as resp:
-                  print(f"Discord response: {resp.status} for {filepath}")
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      print(f"✅ Discord notified ({resp.status}) for {filepath}")
+              except urllib.error.HTTPError as e:
+                  print(f"❌ Discord error {e.code}: {e.read().decode()}")
 
           PYTHON
