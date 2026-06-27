@@ -129,7 +129,11 @@ jobs:
               }
 
               server_name = server_labels.get(folder.lower(), folder.title())
-              ping_message = f"<@&{ROLE_ID}> new changelog for {server_name}"
+              ping_message = (
+                  f"New changelog for **{server_name}**!\n\n"
+                  f"Read more at [Acerex Changelogs](https://changelogs.acerex.net).\n\n"
+                  f"<@&{ROLE_ID}>"
+              )
 
               resp = requests.post(
                   webhook,
